@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import is from '@sindresorhus/is';
-import kppgp from 'kbpgp';
+import kbpgp from 'kbpgp';
 import { logger } from '../logger';
 import { maskToken } from '../util/mask';
 import { regEx } from '../util/regex';
@@ -44,8 +44,8 @@ export async function tryDecryptPgp(
     return null;
   }
   try {
-    const pk = await new Promise<kppgp.KeyManager>((resolve, reject) => {
-      kppgp.KeyManager.import_from_armored_pgp(
+    const pk = await new Promise<kbpgp.KeyManager>((resolve, reject) => {
+      kbpgp.KeyManager.import_from_armored_pgp(
         {
           armored: privateKey.replace(regEx(/\n[ \t]+/g), '\n'),
         },
@@ -59,7 +59,7 @@ export async function tryDecryptPgp(
       );
     });
 
-    const ring = new kppgp.keyring.KeyRing();
+    const ring = new kbpgp.keyring.KeyRing();
     ring.add_key_manager(pk);
 
     const startBlock = '-----BEGIN PGP MESSAGE-----\n\n';
@@ -72,8 +72,8 @@ export async function tryDecryptPgp(
       armoredMessage = `${armoredMessage}${endBlock}`;
     }
 
-    const data = await new Promise<kppgp.Literal>((resolve, reject) => {
-      kppgp.unbox(
+    const data = await new Promise<kbpgp.Literal>((resolve, reject) => {
+      kbpgp.unbox(
         {
           keyfetch: ring,
           armored: armoredMessage,
