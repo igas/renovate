@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import is from '@sindresorhus/is';
-import * as openpgp from 'openpgp';
+import kppgp from 'kbpgp';
 import { logger } from '../logger';
 import { maskToken } from '../util/mask';
 import { regEx } from '../util/regex';
@@ -9,6 +9,31 @@ import { ensureTrailingSlash } from '../util/url';
 import { GlobalConfig } from './global';
 import { DecryptedObject } from './schema';
 import type { RenovateConfig } from './types';
+
+declare module 'kbpgp' {
+  export class KeyManager {
+    static import_from_armored_pgp(
+      opts: { armored: string },
+      cb: (err: Error, pk: KeyManager) => void,
+    ): void;
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-namespace
+  export namespace keyring {
+    export class KeyRing {
+      add_key_manager(pk: KeyManager): void;
+    }
+  }
+
+  export class Literal {
+    toString(): string;
+  }
+
+  export function unbox(
+    opts: { keyfetch: keyring.KeyRing; armored: string },
+    cb: (err: Error, literals: Literal[]) => void,
+  ): void;
+}
 
 export async function tryDecryptPgp(
   privateKey: string,
@@ -19,10 +44,24 @@ export async function tryDecryptPgp(
     return null;
   }
   try {
-    const pk = await openpgp.readPrivateKey({
-      // prettier-ignore
-      armoredKey: privateKey.replace(regEx(/\n[ \t]+/g), '\n'), // little massage to help a common problem
+    const pk = await new Promise<kppgp.KeyManager>((resolve, reject) => {
+      kppgp.KeyManager.import_from_armored_pgp(
+        {
+          armored: privateKey.replace(regEx(/\n[ \t]+/g), '\n'),
+        },
+        (err: Error, pk) => {
+          if (err) {
+            reject(err);
+          } else {
+            resolve(pk);
+          }
+        },
+      );
     });
+
+    const ring = new kppgp.keyring.KeyRing();
+    ring.add_key_manager(pk);
+
     const startBlock = '-----BEGIN PGP MESSAGE-----\n\n';
     const endBlock = '\n-----END PGP MESSAGE-----';
     let armoredMessage = encryptedStr.trim();
@@ -32,17 +71,26 @@ export async function tryDecryptPgp(
     if (!armoredMessage.endsWith(endBlock)) {
       armoredMessage = `${armoredMessage}${endBlock}`;
     }
-    const message = await openpgp.readMessage({
-      armoredMessage,
+
+    const data = await new Promise<kppgp.Literal>((resolve, reject) => {
+      kppgp.unbox(
+        {
+          keyfetch: ring,
+          armored: armoredMessage,
+        },
+        (err: Error, literals: any) => {
+          if (err) {
+            reject(err);
+          } else {
+            resolve(literals[0].toString());
+          }
+        },
+      );
     });
-    const { data } = await openpgp.decrypt({
-      message,
-      decryptionKeys: pk,
-    });
-    logger.debug('Decrypted config using openpgp');
-    return data;
+    logger.debug('Decrypted config using kppgp');
+    return data as string;
   } catch (err) {
-    logger.debug({ err }, 'Could not decrypt using openpgp');
+    logger.debug({ err }, 'Could not decrypt using kppgp');
     return null;
   }
 }
